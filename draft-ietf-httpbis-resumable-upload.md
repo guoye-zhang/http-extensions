@@ -49,6 +49,9 @@ normative:
   CACHING: RFC9111
   RFC9112:
     display: HTTP/1.1
+  RFC9113:
+    display: HTTP/2
+  QUIC: RFC9000
   STRUCTURED-FIELDS: RFC9651
   PATCH: RFC5789
   PROBLEM: RFC9457
@@ -74,7 +77,7 @@ HTTP data transfers can encounter interruption due to reasons such as canceled r
 
 --- middle
 
-# Introduction
+# Introduction {#introduction}
 
 HTTP data transfers can encounter interruption due to reasons such as canceled requests or dropped connections. If the intended recipient can indicate how much of the data was processed prior to interruption, a sender can resume data transfer at that point instead of attempting to transfer all of the data again. HTTP range requests (see {{Section 14 of HTTP}}) support this concept of resumable data transfers for downloads from server to client. While partial PUT is one method for uploading a partial representation (via Content-Range in the request), there are caveats that affect its deployability; see {{Section 14.5 of HTTP}}.
 
@@ -362,7 +365,7 @@ The following key-value pairs are defined:
 `max-age`:
 : Specifies the remaining lifetime of the upload resource in seconds counted from the generation of the response. After the resource's lifetime is reached, the server might make the upload resource inaccessible and a client SHOULD NOT attempt to access the upload resource as these requests will likely fail. The value is an Integer.
 
-Clients usually discover limits through the `Upload-Limit` header field when the upload resource is created ({{upload-creation}}). Throughout the lifetime of the upload resource, these limits SHOULD NOT change in a way that causes failures for clients adhering to the initially discovered limits. If the client discovers that it cannot continue the upload while adhering to the limits, it SHOULD stop the current request immediately and cancel the upload ({{upload-cancellation}}).
+Clients usually discover limits through the `Upload-Limit` header field when the upload resource is created ({{upload-creation}}). Throughout the lifetime of the upload resource, these limits SHOULD NOT change in a way that causes failures for clients adhering to the initially discovered limits. If the client discovers that it cannot continue the upload while adhering to the limits, it SHOULD stop the current request immediately ({{request-cancellation}}) and cancel the upload ({{upload-cancellation}}).
 
 The following recommendations for limit changes can minimize the risk of causing upload failures:
 
@@ -392,7 +395,7 @@ The `Upload-Complete` header field is set to true if the request content include
 
 If the client knows the representation's length, it SHOULD indicate the length in the request to help the server allocate necessary resources for the upload and provide early feedback if the representation violates a limit ({{upload-limit}}), as described in {{upload-length}}.
 
-Clients are not required to discover limits ({{upload-limit}}) before starting the upload and might therefore be initially unaware of limits enforced by the server. However, the client SHOULD respect any limits ({{upload-limit}}) announced during the upload process in the `Upload-Limit` header field in interim or final responses. In particular, if the allowed maximum size is less than the amount of representation data the client intends to upload, the client SHOULD stop the current request immediately and cancel the upload ({{upload-cancellation}}). If the client knows that the representation data is smaller than `min-size`, it cannot expect resumability to be offered. The client might still attempt to transfer the representation in a single request, either in a request with the `Upload-Complete` header field set to true (see {{upgrading-uploads}}) or via a conventional upload.
+Clients are not required to discover limits ({{upload-limit}}) before starting the upload and might therefore be initially unaware of limits enforced by the server. However, the client SHOULD respect any limits ({{upload-limit}}) announced during the upload process in the `Upload-Limit` header field in interim or final responses. In particular, if the allowed maximum size is less than the amount of representation data the client intends to upload, the client SHOULD stop the current request immediately ({{request-cancellation}}) and cancel the upload ({{upload-cancellation}}). If the client knows that the representation data is smaller than `min-size`, it cannot expect resumability to be offered. The client might still attempt to transfer the representation in a single request, either in a request with the `Upload-Complete` header field set to true (see {{upgrading-uploads}}) or via a conventional upload.
 
 The request content can be empty. If the `Upload-Complete` header field is then set to true, the client intends to upload an empty representation. An `Upload-Complete` header field set to false is also valid. This can be used to retrieve the upload resource's URI before transferring any representation data. Since interim responses are optional, this technique provides another mechanism to learn the URI, at the cost of an additional round-trip before data upload can commence.
 
@@ -805,6 +808,21 @@ To support incremental processing, it is RECOMMENDED that clients send request c
 
 As described in {{INCREMENTAL}}, intermediaries might interfere with the incremental delivery of data to a server. Clients can use the `Incremental` header field defined in {{Section 3 of INCREMENTAL}} to signal their preference for incremental forwarding by intermediaries.
 
+# Request Cancellation {#request-cancellation}
+
+A client or server might want to interrupt an in-flight message transfer intentionally for various reasons (see {{introduction}}). The mechanism to do so depend on the used HTTP version:
+
+HTTP/1.1:
+: close the underlying transport connection ({{Section 9.5 of RFC9112}})
+
+HTTP/2:
+: send a `RST_STREAM` frame ({{Section 6.4 of RFC9113}})
+
+HTTP/3:
+: send a `RESET_STREAM` ({{Section 19.4 of QUIC}}) or `STOP_SENDING` frame ({{Section 19.5 of QUIC}})
+
+Version-specific mechanisms place requirements on clients or servers for actioning the cancellation. However, for all versions of HTTP resumable uploads allows the server to process received representation data and expose the upload offset via the upload resource, enabling continuation of the upload after interruption.
+
 # Security Considerations
 
 The upload resource URI is the identifier used for modifying the upload. Without further protection of this URI, an attacker may obtain information about an upload, append data to it, or cancel it. To prevent this, the server SHOULD ensure that only authorized clients can access the upload resource. To reduce the risk of unauthorized access, it is RECOMMENDED to generate upload resource URIs in such a way that makes it hard to be guessed by unauthorized clients. In addition, servers may embed information about the storage or processing location of the uploaded representation in the upload resource URI to make routing requests more efficient. If so, they MUST ensure that no internal information is leaked in the URI that is not intended to be exposed.
@@ -962,6 +980,7 @@ Reference:
 * Clarify that clients might not know limits when starting upload.
 * Remove section covering integrity digests.
 * Increase the draft interop version.
+* Add version-specific details on cancelling in-flight transfers.
 
 ## Since draft-ietf-httpbis-resumable-upload-10
 {:numbered="false"}
